@@ -1,0 +1,47 @@
+name: Chat-log archiv
+
+on:
+  workflow_dispatch:        # ruční tlačítko „Run workflow“
+  schedule:
+    - cron:  '30 22 * * *'  # denně ve 22:30 UTC (00:30 v ČR)
+
+jobs:
+  save-log:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Vytáhni kód repa
+      - uses: actions/checkout@v4
+
+      # 2) Najdi poslední komentář v otevřeném Issues s tagy BEGIN_*
+      - name: Získej obsah chatu z komentáře
+        id: chat
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          # stáhni poslední issue s label „chat-session“
+          ISSUE=$(gh issue list --label chat-session --state open --limit 1 --json number --jq '.[0].number')
+          # stáhni poslední komentář
+          BODY=$(gh issue view $ISSUE --json comments --jq '.comments[-1].body')
+          echo "$BODY" > chat.txt
+
+          # extrahuj bloky
+          RAW=$(awk '/BEGIN_RAW/{flag=1;next}/END_RAW/{flag=0}flag' chat.txt)
+          SUMMARY=$(awk '/BEGIN_SUMMARY/{flag=1;next}/END_SUMMARY/{flag=0}flag' chat.txt)
+
+          # ulož do souborů
+          DATE=$(date +%F)
+          YEAR=$(date +%Y)
+          mkdir -p logs/$YEAR
+          echo "$RAW"     > logs/$YEAR/${DATE}_raw.md
+          echo "$SUMMARY" > logs/$YEAR/${DATE}_summary.md
+      # 3) Commit + push
+      - name: Commit & push
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          git config --global user.name  "chat-bot"
+          git config --global user.email "bot@local"
+          git add logs/.
+          git commit -m "logs: auto-update $(date +%F)" || echo "Nic nového"
+          git push https://${GH_TOKEN}@github.com/${{ github.repository }}.git
